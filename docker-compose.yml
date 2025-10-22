@@ -1,0 +1,29 @@
+# @format
+
+services:
+  app:
+    build: .
+    container_name: biztrackr-app
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.docker
+    depends_on:
+      - mongo
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/BizTrackr
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:latest
+    container_name: biztrackr-db
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=BizTrackr
+
+volumes:
+  mongo_data:
