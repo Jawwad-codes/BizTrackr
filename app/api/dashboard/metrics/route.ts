@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongoose";
 import SaleModel from "@/lib/models/Sale";
 import ExpenseModel from "@/lib/models/Expense";
+import EmployeeModel from "@/lib/models/Employee";
 import InventoryModel from "@/lib/models/Inventory";
 import { DashboardMetrics, APIResponse } from "@/lib/models/types";
 import { requireAuth } from "@/lib/auth";
@@ -65,6 +66,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       },
     ]);
 
+    // Get employee salaries (should be included in total expenses)
+    const employeeSalariesAggregation = await EmployeeModel.aggregate([
+      { $match: { userId: userObjectId } },
+      {
+        $group: {
+          _id: null,
+          totalSalaries: { $sum: "$salary" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
     // Get category breakdown for expenses
     const categoryAggregation = await ExpenseModel.aggregate([
       { $match: expensesFilter },
@@ -79,16 +92,31 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     // Extract totals
     const totalSales = salesAggregation[0]?.totalSales || 0;
-    const totalExpenses = expensesAggregation[0]?.totalExpenses || 0;
+    const regularExpenses = expensesAggregation[0]?.totalExpenses || 0;
+    const totalSalaries = employeeSalariesAggregation[0]?.totalSalaries || 0;
+    const totalExpenses = regularExpenses + totalSalaries;
     const netProfit = totalSales - totalExpenses;
     const profitMargin = totalSales > 0 ? (netProfit / totalSales) * 100 : 0;
 
-    // Calculate category percentages
+    // Calculate category percentages (include salaries as a category)
     const categoryData = categoryAggregation.map((cat) => ({
       category: cat._id,
       amount: cat.amount,
       percentage: totalExpenses > 0 ? (cat.amount / totalExpenses) * 100 : 0,
     }));
+
+    // Add employee salaries as a category if there are any
+    if (totalSalaries > 0) {
+      categoryData.push({
+        category: "Employee Salaries",
+        amount: totalSalaries,
+        percentage:
+          totalExpenses > 0 ? (totalSalaries / totalExpenses) * 100 : 0,
+      });
+    }
+
+    // Sort by amount descending
+    categoryData.sort((a, b) => b.amount - a.amount);
 
     // Get inventory metrics
     const inventoryAggregation = await InventoryModel.aggregate([
@@ -126,11 +154,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const chartData = await generateChartData(
       chartStartDate,
       chartEndDate,
-      userObjectId
+      userObjectId.toString()
     );
 
     // Get recent activity (last 10 items)
-    const recentActivity = await generateRecentActivity(userObjectId);
+    const recentActivity = await generateRecentActivity(
+      userObjectId.toString()
+    );
 
     const metrics: DashboardMetrics = {
       totalSales,
@@ -207,6 +237,23 @@ async function generateChartData(
     { $sort: { _id: 1 } },
   ]);
 
+  // Get total employee salaries (distributed across the date range)
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  const employeeSalaries = await EmployeeModel.aggregate([
+    { $match: { userId: userObjectId } },
+    {
+      $group: {
+        _id: null,
+        totalSalaries: { $sum: "$salary" },
+      },
+    },
+  ]);
+
+  const totalSalaries = employeeSalaries[0]?.totalSalaries || 0;
+
+  // Calculate daily salary cost (assuming monthly salaries, divide by 30)
+  const dailySalaryCost = totalSalaries / 30;
+
   // Create a map for easy lookup
   const salesMap = new Map(dailySales.map((item) => [item._id, item.sales]));
   const expensesMap = new Map(
@@ -225,13 +272,14 @@ async function generateChartData(
   ) {
     const dateStr = date.toISOString().split("T")[0];
     const sales = salesMap.get(dateStr) || 0;
-    const expenses = expensesMap.get(dateStr) || 0;
+    const regularExpenses = expensesMap.get(dateStr) || 0;
+    const totalExpenses = regularExpenses + dailySalaryCost;
 
     chartData.push({
       date: dateStr,
       sales,
-      expenses,
-      profit: sales - expenses,
+      expenses: totalExpenses,
+      profit: sales - totalExpenses,
     });
   }
 
@@ -252,6 +300,12 @@ async function generateRecentActivity(userId: string) {
     .limit(5)
     .lean();
 
+  // Get recent employees (newly added)
+  const recentEmployees = await EmployeeModel.find({ userId })
+    .sort({ createdAt: -1 })
+    .limit(3)
+    .lean();
+
   // Combine and sort by creation date
   const allActivity = [
     ...recentSales.map((sale) => ({
@@ -267,6 +321,13 @@ async function generateRecentActivity(userId: string) {
       description: `Expense: ${expense.description}`,
       amount: expense.amount,
       date: expense.date,
+    })),
+    ...recentEmployees.map((employee) => ({
+      id: (employee._id as any).toString(),
+      type: "employee" as const,
+      description: `Employee: ${employee.name} (${employee.role})`,
+      amount: employee.salary,
+      date: employee.hireDate || new Date().toISOString().split("T")[0],
     })),
   ];
 

@@ -147,9 +147,17 @@ export class ExcelExporter {
 
     worksheetData.push(["", "", "", "", ""]);
     worksheetData.push([
-      "TOTAL EXPENSES",
+      "TOTAL EXPENSES (Regular)",
       "",
       this.formatCurrency(totalExpenses),
+      "",
+      "",
+    ]);
+    worksheetData.push(["", "", "", "", ""]);
+    worksheetData.push([
+      "NOTE: Employee salaries are tracked",
+      "separately in the Employee sheet and",
+      "included in total business expenses.",
       "",
       "",
     ]);
@@ -388,7 +396,7 @@ export class ExcelExporter {
       (sum, sale) => sum + sale.amount * sale.quantity,
       0
     );
-    const totalExpenses = data.expenses.reduce(
+    const regularExpenses = data.expenses.reduce(
       (sum, expense) => sum + expense.amount,
       0
     );
@@ -396,6 +404,7 @@ export class ExcelExporter {
       (sum, emp) => sum + emp.salary,
       0
     );
+    const totalExpenses = regularExpenses + totalSalaries;
     const totalInventoryValue = data.inventory.reduce(
       (sum, item) => sum + item.stock * item.costPrice,
       0
@@ -411,12 +420,13 @@ export class ExcelExporter {
       ["KEY METRICS", "", "", ""],
       ["Total Sales", this.formatCurrency(totalSales), "", ""],
       ["Total Expenses", this.formatCurrency(totalExpenses), "", ""],
+      ["  - Regular Expenses", this.formatCurrency(regularExpenses), "", ""],
+      ["  - Employee Salaries", this.formatCurrency(totalSalaries), "", ""],
       ["Net Profit", this.formatCurrency(netProfit), "", ""],
       ["Profit Margin", `${profitMargin}%`, "", ""],
       ["", "", "", ""],
       ["OPERATIONAL METRICS", "", "", ""],
       ["Total Employees", data.employees.length.toString(), "", ""],
-      ["Total Salary Cost", this.formatCurrency(totalSalaries), "", ""],
       ["Total Products", data.inventory.length.toString(), "", ""],
       ["Inventory Value", this.formatCurrency(totalInventoryValue), "", ""],
       [
