@@ -45,12 +45,17 @@ export default function EmployeesPage() {
   const { isLoading, withLoading: withMultipleLoading } = useMultipleLoading();
 
   // Don't render anything while checking authentication
-  if (authLoading || !user) {
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <LoadingSpinner message="Authenticating..." size="lg" />
       </div>
     );
+  }
+
+  // If not loading and no user, the useRequireAuth hook will redirect
+  if (!user) {
+    return null;
   }
 
   // Fetch employees data on component mount

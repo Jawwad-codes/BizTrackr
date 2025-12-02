@@ -12,15 +12,17 @@ import {
   TableSkeleton,
   CardSkeleton,
   LoadingButton,
+  LoadingSpinner,
 } from "@/components/loading-states";
 import { useLoading, useMultipleLoading } from "@/hooks/use-loading";
-import { useAuth } from "@/lib/auth-context";
+import { useRequireAuth } from "@/lib/auth-context";
 import {
   getBusinessConfig,
   getBusinessTypeLabel,
   getBusinessTypeEmoji,
 } from "@/lib/business-config";
 import { motion } from "framer-motion";
+import { VoiceInput } from "@/components/voice-input";
 
 export default function SalesPage() {
   const [sales, setSales] = useState<Sale[]>([]);
@@ -37,7 +39,7 @@ export default function SalesPage() {
     initialLoading: true,
   });
   const { isLoading, withLoading: withMultipleLoading } = useMultipleLoading();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useRequireAuth();
 
   // Get business configuration
   const businessType = user?.businessType as BusinessType;
@@ -49,17 +51,29 @@ export default function SalesPage() {
     ? getBusinessTypeEmoji(businessType)
     : "🏢";
 
-  // Fetch sales data on component mount
-  useEffect(() => {
-    fetchSales();
-    // Set default date to today
-    const today = new Date().toISOString().split("T")[0];
-    setFormData((prev) => ({ ...prev, date: today }));
-  }, []);
-
+  // Fetch sales data
   const fetchSales = async () => {
     const result = await withLoading(async () => {
-      const response = await fetch("/api/sales");
+      const userData = localStorage.getItem("user");
+      const token = userData ? JSON.parse(userData).token : null;
+
+      if (!token) {
+        throw new Error("No authentication token found");
+      }
+
+      const response = await fetch("/api/sales", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => ({ error: { message: `HTTP ${response.status}` } }));
+        throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+      }
+
       const result: APIResponse<Sale[]> = await response.json();
 
       if (result.success) {
@@ -75,6 +89,16 @@ export default function SalesPage() {
     }
   };
 
+  // Initialize page
+  useEffect(() => {
+    if (user && !authLoading) {
+      fetchSales();
+      const today = new Date().toISOString().split("T")[0];
+      setFormData((prev) => ({ ...prev, date: today }));
+    }
+  }, [user, authLoading]);
+
+  // Handle add sale
   const handleAdd = async () => {
     if (
       !formData.item ||
@@ -86,7 +110,6 @@ export default function SalesPage() {
       return;
     }
 
-    // Validate numeric inputs
     const amount = Number.parseFloat(formData.amount);
     const quantity = Number.parseInt(formData.quantity);
 
@@ -100,48 +123,83 @@ export default function SalesPage() {
       return;
     }
 
-    const result = await withMultipleLoading("add", async () => {
-      const response = await fetch("/api/sales", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          item: formData.item.trim(),
-          amount: amount,
-          quantity: quantity,
-          date: formData.date,
-        }),
+    try {
+      const result = await withMultipleLoading("add", async () => {
+        const userData = localStorage.getItem("user");
+        const token = userData ? JSON.parse(userData).token : null;
+
+        if (!token) {
+          throw new Error(
+            "No authentication token found. Please log in again."
+          );
+        }
+
+        const response = await fetch("/api/sales", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            item: formData.item.trim(),
+            amount: amount,
+            quantity: quantity,
+            date: formData.date,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response
+            .json()
+            .catch(() => ({ error: { message: `HTTP ${response.status}` } }));
+          throw new Error(
+            errorData.error?.message || `HTTP ${response.status}`
+          );
+        }
+
+        const result: APIResponse<Sale> = await response.json();
+
+        if (result.success) {
+          setSales([result.data, ...sales]);
+          setFormData({ item: "", amount: "", quantity: "", date: "" });
+          setShowForm(false);
+          return result.data;
+        } else {
+          throw new Error(result.error.message);
+        }
       });
 
-      const result: APIResponse<Sale> = await response.json();
-
-      if (result.success) {
-        setSales([result.data, ...sales]);
-        setFormData({ item: "", amount: "", quantity: "", date: "" });
-        setShowForm(false);
-        return result.data;
-      } else {
-        throw new Error(result.error.message);
+      if (result) {
+        const total = result.amount * (result.quantity || 1);
+        toast.success(
+          `✅ Sale added: ${result.item} - ${result.quantity || 1} × $${
+            result.amount
+          } = $${total.toLocaleString()}`
+        );
       }
-    });
-
-    if (result) {
-      toast.success(`Sale added: ${result.item} for $${result.amount}`);
+    } catch (error) {
+      console.error("Error adding sale:", error);
+      toast.error(
+        `Failed to add sale: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   };
 
+  // Handle edit sale
   const handleEdit = (sale: Sale) => {
     setEditingId(sale._id as string);
     setFormData({
       item: sale.item,
       amount: sale.amount.toString(),
-      quantity: (sale.quantity || 1).toString(), // Default to 1 if quantity is missing
+      quantity: (sale.quantity || 1).toString(),
       date: sale.date,
     });
     setShowForm(true);
   };
 
+  // Handle update sale
   const handleUpdate = async () => {
     if (
       !formData.item ||
@@ -154,7 +212,6 @@ export default function SalesPage() {
       return;
     }
 
-    // Validate numeric inputs
     const amount = Number.parseFloat(formData.amount);
     const quantity = Number.parseInt(formData.quantity);
 
@@ -168,44 +225,79 @@ export default function SalesPage() {
       return;
     }
 
-    const result = await withMultipleLoading("update", async () => {
-      const response = await fetch(`/api/sales/${editingId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          item: formData.item.trim(),
-          amount: amount,
-          quantity: quantity,
-          date: formData.date,
-        }),
+    try {
+      const result = await withMultipleLoading("update", async () => {
+        const userData = localStorage.getItem("user");
+        const token = userData ? JSON.parse(userData).token : null;
+
+        if (!token) {
+          throw new Error(
+            "No authentication token found. Please log in again."
+          );
+        }
+
+        const response = await fetch(`/api/sales/${editingId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            item: formData.item.trim(),
+            amount: amount,
+            quantity: quantity,
+            date: formData.date,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response
+            .json()
+            .catch(() => ({ error: { message: `HTTP ${response.status}` } }));
+          throw new Error(
+            errorData.error?.message || `HTTP ${response.status}`
+          );
+        }
+
+        const result: APIResponse<Sale> = await response.json();
+
+        if (result.success) {
+          setSales(sales.map((s) => (s._id === editingId ? result.data : s)));
+          setFormData({ item: "", amount: "", quantity: "", date: "" });
+          setShowForm(false);
+          setEditingId(null);
+          return result.data;
+        } else {
+          throw new Error(result.error.message);
+        }
       });
 
-      const result: APIResponse<Sale> = await response.json();
-
-      if (result.success) {
-        setSales(sales.map((s) => (s._id === editingId ? result.data : s)));
-        setFormData({ item: "", amount: "", quantity: "", date: "" });
-        setShowForm(false);
-        setEditingId(null);
-        return result.data;
-      } else {
-        throw new Error(result.error.message);
+      if (result) {
+        const total = result.amount * (result.quantity || 1);
+        toast.success(
+          `✅ Sale updated: ${result.item} - ${result.quantity || 1} × $${
+            result.amount
+          } = $${total.toLocaleString()}`
+        );
       }
-    });
-
-    if (result) {
-      toast.success(`Sale updated: ${result.item} for $${result.amount}`);
+    } catch (error) {
+      console.error("Error updating sale:", error);
+      toast.error(
+        `Failed to update sale: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   };
 
+  // Handle cancel edit
   const handleCancelEdit = () => {
     setEditingId(null);
     setFormData({ item: "", amount: "", quantity: "", date: "" });
     setShowForm(false);
   };
 
+  // Handle delete sale
   const handleDelete = async (id: string, itemName: string) => {
     if (
       !confirm(`Are you sure you want to delete the sale for "${itemName}"?`)
@@ -213,27 +305,75 @@ export default function SalesPage() {
       return;
     }
 
-    const result = await withMultipleLoading(`delete-${id}`, async () => {
-      const response = await fetch(`/api/sales/${id}`, {
-        method: "DELETE",
+    try {
+      const result = await withMultipleLoading(`delete-${id}`, async () => {
+        const userData = localStorage.getItem("user");
+        const token = userData ? JSON.parse(userData).token : null;
+
+        if (!token) {
+          throw new Error(
+            "No authentication token found. Please log in again."
+          );
+        }
+
+        const response = await fetch(`/api/sales/${id}`, {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          const errorData = await response
+            .json()
+            .catch(() => ({ error: { message: `HTTP ${response.status}` } }));
+          throw new Error(
+            errorData.error?.message || `HTTP ${response.status}`
+          );
+        }
+
+        const result: APIResponse<{ id: string }> = await response.json();
+
+        if (result.success) {
+          setSales(sales.filter((s) => s._id?.toString() !== id));
+          return result.data;
+        } else {
+          throw new Error(result.error.message);
+        }
       });
 
-      const result: APIResponse<Sale> = await response.json();
-
-      if (result.success) {
-        setSales(sales.filter((s) => s._id !== id));
-        return result.data;
-      } else {
-        throw new Error(result.error.message);
+      if (result) {
+        toast.success(`✅ Sale deleted: ${itemName}`);
       }
-    });
-
-    if (result) {
-      toast.success(`Sale deleted: ${itemName}`);
+    } catch (error) {
+      console.error("Error deleting sale:", error);
+      toast.error(
+        `Failed to delete sale: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   };
 
-  const totalSales = sales.reduce((sum, s) => sum + s.amount, 0);
+  // Calculate total sales
+  const totalSales = sales.reduce(
+    (sum, s) => sum + s.amount * (s.quantity || 1),
+    0
+  );
+
+  // Don't render anything while checking authentication
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <LoadingSpinner message="Authenticating..." size="lg" />
+      </div>
+    );
+  }
+
+  // If not loading and no user, the useRequireAuth hook will redirect
+  if (!user) {
+    return null;
+  }
 
   return (
     <div className="flex">
@@ -284,7 +424,7 @@ export default function SalesPage() {
             </div>
           )}
 
-          {/* Add Form */}
+          {/* Add/Edit Form */}
           {showForm && (
             <motion.div
               className="p-6 border border-border/40 bg-card/50 backdrop-blur rounded-lg space-y-4"
@@ -296,6 +436,50 @@ export default function SalesPage() {
               <h3 className="font-semibold text-foreground">
                 {editingId ? "Edit Sale" : "Add New Sale"}
               </h3>
+
+              {/* Voice Input Section */}
+              {!editingId && (
+                <div className="p-4 bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/20 rounded-lg">
+                  <VoiceInput
+                    onTranscript={(transcript) => {
+                      console.log("Voice transcript:", transcript);
+                    }}
+                    onParsedData={(data) => {
+                      // Auto-fill form with voice data
+                      const newFormData = { ...formData };
+
+                      if (data.item) {
+                        newFormData.item = data.item;
+                      }
+                      if (data.quantity) {
+                        newFormData.quantity = data.quantity.toString();
+                      }
+                      if (data.amount) {
+                        newFormData.amount = data.amount.toString();
+                      }
+                      if (data.date) {
+                        newFormData.date = data.date;
+                      }
+
+                      setFormData(newFormData);
+
+                      // Auto-save if all required fields are filled
+                      if (
+                        newFormData.item &&
+                        newFormData.quantity &&
+                        newFormData.amount &&
+                        newFormData.date
+                      ) {
+                        toast.success(
+                          "Voice data captured! Click Save to store."
+                        );
+                      }
+                    }}
+                    disabled={isLoading("add")}
+                  />
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <input
                   type="text"
@@ -318,7 +502,7 @@ export default function SalesPage() {
                 />
                 <input
                   type="number"
-                  placeholder={businessConfig?.priceLabel || "Price"}
+                  placeholder={businessConfig?.priceLabel || "Unit Price"}
                   value={formData.amount}
                   onChange={(e) =>
                     setFormData({ ...formData, amount: e.target.value })
@@ -336,6 +520,22 @@ export default function SalesPage() {
                   className="px-4 py-2 bg-secondary border border-border/40 text-foreground rounded-lg text-sm transition-all duration-300 ease-out"
                 />
               </div>
+
+              {/* Show calculated total */}
+              {formData.quantity && formData.amount && (
+                <div className="p-3 bg-accent/10 border border-accent/20 rounded-lg">
+                  <p className="text-sm text-muted-foreground">
+                    Total: {formData.quantity} × ${formData.amount} =
+                    <span className="font-semibold text-accent ml-1">
+                      $
+                      {(
+                        Number(formData.quantity) * Number(formData.amount)
+                      ).toLocaleString()}
+                    </span>
+                  </p>
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row gap-2">
                 <LoadingButton
                   onClick={editingId ? handleUpdate : handleAdd}
@@ -346,14 +546,9 @@ export default function SalesPage() {
                 </LoadingButton>
                 <button
                   onClick={
-                    editingId
-                      ? handleCancelEdit
-                      : () => {
-                          setShowForm(false);
-                          clearError();
-                        }
+                    editingId ? handleCancelEdit : () => setShowForm(false)
                   }
-                  disabled={isLoading("add")}
+                  disabled={isLoading("add") || isLoading("update")}
                   className="px-4 py-2 border border-border/40 bg-transparent text-foreground hover:bg-secondary rounded-lg font-medium transition-all duration-300 ease-out disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
@@ -364,7 +559,7 @@ export default function SalesPage() {
 
           {/* Sales Table */}
           {loading ? (
-            <TableSkeleton rows={5} columns={4} />
+            <TableSkeleton rows={5} columns={6} />
           ) : sales.length === 0 ? (
             <div className="border border-border/40 bg-card/50 backdrop-blur rounded-lg p-8 text-center">
               <p className="text-muted-foreground mb-4">
@@ -388,10 +583,13 @@ export default function SalesPage() {
                         {businessConfig?.itemLabel || "Item"}
                       </th>
                       <th className="px-4 py-3 text-left font-semibold text-foreground hidden sm:table-cell">
-                        {businessConfig?.quantityLabel || "Quantity"}
+                        {businessConfig?.quantityLabel || "Qty"}
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold text-foreground hidden sm:table-cell">
+                        {businessConfig?.priceLabel || "Unit Price"}
                       </th>
                       <th className="px-4 py-3 text-left font-semibold text-foreground">
-                        {businessConfig?.priceLabel || "Price"}
+                        Total
                       </th>
                       <th className="px-4 py-3 text-left font-semibold text-foreground hidden md:table-cell">
                         Date
@@ -414,8 +612,17 @@ export default function SalesPage() {
                           {sale.quantity || 1}{" "}
                           {businessConfig?.defaultUnit || "pcs"}
                         </td>
-                        <td className="px-4 py-3 text-accent font-semibold text-sm">
+                        <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell text-sm">
                           ${sale.amount.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-accent font-semibold text-sm">
+                          $
+                          {(
+                            sale.amount * (sale.quantity || 1)
+                          ).toLocaleString()}
+                          <div className="text-xs text-muted-foreground sm:hidden mt-1">
+                            {sale.quantity || 1} × ${sale.amount}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-muted-foreground hidden md:table-cell text-sm">
                           {sale.date}

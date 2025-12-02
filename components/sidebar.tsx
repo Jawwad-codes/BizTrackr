@@ -20,6 +20,7 @@ import {
   X,
   Brain,
   Download,
+  Zap,
 } from "lucide-react";
 
 const navItems = [
@@ -29,6 +30,7 @@ const navItems = [
   { href: "/employees", label: "Employees", icon: Users },
   { href: "/inventory", label: "Inventory", icon: Package },
   { href: "/insights", label: "AI Insights", icon: Brain },
+  { href: "/pricing", label: "Pricing", icon: Zap },
   { href: "/export", label: "Export Data", icon: Download },
   { href: "/profile", label: "Profile", icon: Settings },
 ];

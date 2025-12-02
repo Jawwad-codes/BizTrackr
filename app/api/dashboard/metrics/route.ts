@@ -48,7 +48,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       {
         $group: {
           _id: null,
-          totalSales: { $sum: "$amount" },
+          totalSales: { $sum: { $multiply: ["$amount", "$quantity"] } },
           count: { $sum: 1 },
         },
       },
@@ -162,6 +162,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       userObjectId.toString()
     );
 
+    console.log(`Dashboard metrics for user ${user.userId}:`, {
+      totalSales,
+      totalExpenses,
+      netProfit,
+      chartDataPoints: chartData.length,
+      categoryDataPoints: categoryData.length,
+      recentActivityItems: recentActivity.length,
+    });
+
     const metrics: DashboardMetrics = {
       totalSales,
       totalExpenses,
@@ -203,18 +212,20 @@ async function generateChartData(
   endDate: string,
   userId: string
 ) {
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+
   // Get daily sales aggregation
   const dailySales = await SaleModel.aggregate([
     {
       $match: {
-        userId: userId,
+        userId: userObjectId,
         date: { $gte: startDate, $lte: endDate },
       },
     },
     {
       $group: {
         _id: "$date",
-        sales: { $sum: "$amount" },
+        sales: { $sum: { $multiply: ["$amount", "$quantity"] } },
       },
     },
     { $sort: { _id: 1 } },
@@ -224,7 +235,7 @@ async function generateChartData(
   const dailyExpenses = await ExpenseModel.aggregate([
     {
       $match: {
-        userId: userId,
+        userId: userObjectId,
         date: { $gte: startDate, $lte: endDate },
       },
     },
@@ -238,7 +249,6 @@ async function generateChartData(
   ]);
 
   // Get total employee salaries (distributed across the date range)
-  const userObjectId = new mongoose.Types.ObjectId(userId);
   const employeeSalaries = await EmployeeModel.aggregate([
     { $match: { userId: userObjectId } },
     {
@@ -288,20 +298,22 @@ async function generateChartData(
 
 // Helper function to generate recent activity
 async function generateRecentActivity(userId: string) {
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+
   // Get recent sales
-  const recentSales = await SaleModel.find({ userId })
+  const recentSales = await SaleModel.find({ userId: userObjectId })
     .sort({ createdAt: -1 })
     .limit(5)
     .lean();
 
   // Get recent expenses
-  const recentExpenses = await ExpenseModel.find({ userId })
+  const recentExpenses = await ExpenseModel.find({ userId: userObjectId })
     .sort({ createdAt: -1 })
     .limit(5)
     .lean();
 
   // Get recent employees (newly added)
-  const recentEmployees = await EmployeeModel.find({ userId })
+  const recentEmployees = await EmployeeModel.find({ userId: userObjectId })
     .sort({ createdAt: -1 })
     .limit(3)
     .lean();
@@ -311,8 +323,8 @@ async function generateRecentActivity(userId: string) {
     ...recentSales.map((sale) => ({
       id: (sale._id as any).toString(),
       type: "sale" as const,
-      description: `Sale: ${sale.item}`,
-      amount: sale.amount,
+      description: `Sale: ${sale.item} (${sale.quantity}x)`,
+      amount: sale.amount * sale.quantity,
       date: sale.date,
     })),
     ...recentExpenses.map((expense) => ({

@@ -3,8 +3,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongoose";
 import SaleModel from "@/lib/models/Sale";
+import InventoryModel from "@/lib/models/Inventory";
 import { Sale, APIResponse } from "@/lib/models/types";
 import { requireAuth } from "@/lib/auth";
+import mongoose from "mongoose";
 
 // GET /api/sales - Retrieve user's sales
 export async function GET(
@@ -67,7 +69,12 @@ export async function POST(
     const body = await request.json();
 
     // Validate required fields
-    if (!body.item || !body.amount || !body.quantity || !body.date) {
+    if (
+      !body.item ||
+      body.amount === undefined ||
+      body.quantity === undefined ||
+      !body.date
+    ) {
       return NextResponse.json(
         {
           success: false,
@@ -83,7 +90,7 @@ export async function POST(
     }
 
     // Validate amount is a positive number
-    if (typeof body.amount !== "number" || body.amount < 0) {
+    if (typeof body.amount !== "number" || body.amount <= 0) {
       return NextResponse.json(
         {
           success: false,
@@ -132,7 +139,45 @@ export async function POST(
       );
     }
 
-    // Create new sale with user ID
+    // Check if inventory item exists and has sufficient quantity
+    const inventoryItem = await InventoryModel.findOne({
+      userId: user.userId,
+      productName: body.item.trim(),
+    });
+
+    if (!inventoryItem) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: "INVENTORY_NOT_FOUND",
+            message: `Inventory item '${body.item.trim()}' not found`,
+            details: { item: body.item.trim() },
+          },
+        },
+        { status: 400 }
+      );
+    }
+
+    if (inventoryItem.stock < body.quantity) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: "INSUFFICIENT_INVENTORY",
+            message: `Insufficient inventory. Available: ${inventoryItem.stock}, Requested: ${body.quantity}`,
+            details: {
+              available: inventoryItem.stock,
+              requested: body.quantity,
+              item: body.item.trim(),
+            },
+          },
+        },
+        { status: 400 }
+      );
+    }
+
+    // Create new sale
     const newSale = new SaleModel({
       userId: user.userId,
       item: body.item.trim(),
@@ -143,10 +188,18 @@ export async function POST(
 
     const savedSale = await newSale.save();
 
+    // Update inventory stock
+    await InventoryModel.findByIdAndUpdate(inventoryItem._id, {
+      $inc: { stock: -body.quantity },
+    });
+
+    const saleData = savedSale.toObject() as Sale;
+
     return NextResponse.json(
       {
         success: true,
-        data: savedSale.toObject() as Sale,
+        data: saleData,
+        message: "Sale created successfully and inventory updated",
       },
       { status: 201 }
     );

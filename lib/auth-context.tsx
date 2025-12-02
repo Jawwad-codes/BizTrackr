@@ -99,21 +99,20 @@ export function useAuth() {
 export function useRequireAuth() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const [hasRedirected, setHasRedirected] = useState(false);
 
   useEffect(() => {
-    // Only redirect if we're sure there's no user and not loading
-    // The middleware should handle most redirects, this is a fallback
-    if (!loading && !user) {
+    // Only redirect once and only if we're sure there's no user and not loading
+    if (!loading && !user && !hasRedirected) {
       const currentPath = window.location.pathname;
-      if (
-        currentPath !== "/login" &&
-        currentPath !== "/register" &&
-        currentPath !== "/"
-      ) {
+      const publicPaths = ["/login", "/register", "/"];
+
+      if (!publicPaths.includes(currentPath)) {
+        setHasRedirected(true);
         router.push("/login");
       }
     }
-  }, [user, loading, router]);
+  }, [user, loading, router, hasRedirected]);
 
   return { user, loading };
 }

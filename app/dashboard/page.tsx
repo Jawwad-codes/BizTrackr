@@ -40,6 +40,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
+import { TradingChart } from "@/components/trading-chart";
 
 const COLORS = [
   "oklch(0.65 0.25 45)",
@@ -54,6 +55,7 @@ export default function DashboardPage() {
   const [dashboardData, setDashboardData] = useState<DashboardMetrics | null>(
     null
   );
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const { loading, error, withLoading, clearError } = useLoading({
     initialLoading: true,
@@ -67,6 +69,38 @@ export default function DashboardPage() {
       fetchDashboardData();
     }
   }, [timeRange, user, authLoading]);
+
+  // Auto-refresh dashboard data every 30 seconds
+  useEffect(() => {
+    if (!user || authLoading) return;
+
+    const interval = setInterval(() => {
+      // Only refresh if the page is visible and not currently loading
+      if (document.visibilityState === "visible" && !loading) {
+        fetchDashboardData();
+      }
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(interval);
+  }, [user, authLoading, loading]);
+
+  // Refresh data when page becomes visible (user returns to tab)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (
+        document.visibilityState === "visible" &&
+        user &&
+        !authLoading &&
+        !loading
+      ) {
+        fetchDashboardData();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [user, authLoading, loading]);
 
   const fetchDashboardData = async () => {
     const result = await withLoading(async () => {
@@ -90,6 +124,7 @@ export default function DashboardPage() {
 
       if (result.success) {
         setDashboardData(result.data);
+        setLastUpdated(new Date());
         return result.data;
       } else {
         throw new Error(result.error.message);
@@ -97,10 +132,13 @@ export default function DashboardPage() {
     });
 
     if (result) {
-      toast({
-        title: "Dashboard updated",
-        description: `Loaded data for ${timeRange} period`,
-      });
+      // Only show toast for manual refreshes, not auto-refreshes
+      if (document.visibilityState === "visible") {
+        toast({
+          title: "Dashboard updated",
+          description: `Loaded data for ${timeRange} period`,
+        });
+      }
     }
   };
 
@@ -189,12 +227,17 @@ export default function DashboardPage() {
   };
 
   // Don't render anything while checking authentication
-  if (authLoading || !user) {
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <LoadingSpinner message="Authenticating..." size="lg" />
       </div>
     );
+  }
+
+  // If not loading and no user, the useRequireAuth hook will redirect
+  if (!user) {
+    return null;
   }
 
   return (
@@ -212,6 +255,11 @@ export default function DashboardPage() {
               </h1>
               <p className="text-sm sm:text-base text-muted-foreground">
                 Welcome back! Here's your business overview.
+                {lastUpdated && (
+                  <span className="block text-xs mt-1">
+                    Last updated: {lastUpdated.toLocaleTimeString()}
+                  </span>
+                )}
               </p>
             </div>
             <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
@@ -226,6 +274,20 @@ export default function DashboardPage() {
                 <option value="6m">Last 6 Months</option>
                 <option value="1y">Last Year</option>
               </select>
+              <button
+                onClick={fetchDashboardData}
+                disabled={loading}
+                className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground border border-border/40 rounded-lg font-medium flex items-center justify-center gap-2 transition-all duration-300 ease-out disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? (
+                  <LoadingSpinner size="sm" />
+                ) : (
+                  <Calendar className="w-4 h-4" />
+                )}
+                <span className="hidden sm:inline">
+                  {loading ? "Loading..." : "Refresh"}
+                </span>
+              </button>
               <button
                 onClick={() => (window.location.href = "/export")}
                 disabled={loading || !dashboardData}
@@ -381,55 +443,51 @@ export default function DashboardPage() {
                   <LoadingSpinner message="Loading chart data..." />
                 </div>
               ) : dashboardData && dashboardData.chartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={dashboardData.chartData}>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke="currentColor"
-                      className="stroke-muted-foreground/30"
-                    />
-                    <XAxis
-                      stroke="currentColor"
-                      className="fill-foreground"
-                      style={{ fontSize: "12px" }}
-                    />
-                    <YAxis
-                      stroke="currentColor"
-                      className="fill-foreground"
-                      style={{ fontSize: "12px" }}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "hsl(var(--background))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: "8px",
-                        boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-                        color: "hsl(var(--foreground))",
-                      }}
-                    />
-                    <Legend />
-                    <Line
-                      type="monotone"
-                      dataKey="sales"
-                      stroke="#f97316"
-                      strokeWidth={3}
-                      dot={false}
-                      name="Sales"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="expenses"
-                      stroke="currentColor"
-                      strokeWidth={3}
-                      dot={false}
-                      name="Expenses"
-                      className="stroke-foreground"
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+                <TradingChart
+                  data={dashboardData.chartData}
+                  height={320}
+                  showProfit={true}
+                  type="area"
+                />
               ) : (
-                <div className="h-[300px] flex items-center justify-center text-muted-foreground">
-                  <p>No chart data available</p>
+                <div className="h-[300px] flex items-center justify-center">
+                  <div className="text-center space-y-4">
+                    <TrendingUp className="h-12 w-12 text-muted-foreground mx-auto" />
+                    <div>
+                      <p className="text-muted-foreground mb-2">
+                        No chart data available
+                      </p>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const response = await fetch(
+                              "/api/debug/generate-sample-data",
+                              {
+                                method: "POST",
+                                credentials: "include",
+                              }
+                            );
+                            if (response.ok) {
+                              toast({
+                                title: "Sample data generated!",
+                                description: "Refreshing dashboard...",
+                              });
+                              setTimeout(() => window.location.reload(), 1000);
+                            }
+                          } catch (error) {
+                            toast({
+                              title: "Error",
+                              description: "Failed to generate sample data",
+                              variant: "destructive",
+                            });
+                          }
+                        }}
+                        className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                      >
+                        Generate Sample Data
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -472,6 +530,10 @@ export default function DashboardPage() {
                         borderRadius: "8px",
                         color: "hsl(var(--foreground))",
                       }}
+                      formatter={(value: number, name: string) => [
+                        `$${value.toLocaleString()}`,
+                        name,
+                      ]}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -493,34 +555,12 @@ export default function DashboardPage() {
                 <LoadingSpinner message="Loading profit analysis..." />
               </div>
             ) : dashboardData && dashboardData.chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={dashboardData.chartData}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="currentColor"
-                    className="stroke-muted-foreground/30"
-                  />
-                  <XAxis
-                    stroke="currentColor"
-                    className="fill-foreground"
-                    style={{ fontSize: "12px" }}
-                  />
-                  <YAxis
-                    stroke="currentColor"
-                    className="fill-foreground"
-                    style={{ fontSize: "12px" }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--background))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "8px",
-                      color: "hsl(var(--foreground))",
-                    }}
-                  />
-                  <Bar dataKey="profit" fill="#f97316" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <TradingChart
+                data={dashboardData.chartData}
+                height={250}
+                showProfit={true}
+                type="line"
+              />
             ) : (
               <div className="h-[250px] flex items-center justify-center text-muted-foreground">
                 <p>No profit data available</p>

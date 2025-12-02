@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongoose";
 import SaleModel from "@/lib/models/Sale";
+import InventoryModel from "@/lib/models/Inventory";
 import { Sale, APIResponse } from "@/lib/models/types";
 import { requireAuth } from "@/lib/auth";
 import mongoose from "mongoose";
@@ -94,9 +95,12 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse<APIResponse<Sale>>> {
   try {
+    // Authenticate user
+    const user = requireAuth(request);
+
     await connectToDatabase();
 
-    const { id } = params;
+    const { id } = await params;
 
     // Validate ObjectId format
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -118,7 +122,7 @@ export async function PUT(
     // Validate required fields if provided
     if (
       body.amount !== undefined &&
-      (typeof body.amount !== "number" || body.amount < 0)
+      (typeof body.amount !== "number" || body.amount <= 0)
     ) {
       return NextResponse.json(
         {
@@ -171,6 +175,26 @@ export async function PUT(
       }
     }
 
+    // Get the current sale to check for quantity changes
+    const currentSale = await SaleModel.findOne({
+      _id: id,
+      userId: user.userId,
+    });
+
+    if (!currentSale) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: "SALE_NOT_FOUND",
+            message: "Sale not found",
+            details: { id },
+          },
+        },
+        { status: 404 }
+      );
+    }
+
     // Prepare update data
     const updateData: Partial<Sale> = {};
     if (body.item !== undefined) updateData.item = body.item.trim();
@@ -178,11 +202,53 @@ export async function PUT(
     if (body.quantity !== undefined) updateData.quantity = body.quantity;
     if (body.date !== undefined) updateData.date = body.date;
 
-    const updatedSale = await SaleModel.findByIdAndUpdate(id, updateData, {
-      new: true, // Return the updated document
-      runValidators: true, // Run schema validators
-      lean: true, // Return plain JavaScript object
-    });
+    // Handle inventory updates if quantity changed (simplified version)
+    if (body.quantity !== undefined && body.quantity !== currentSale.quantity) {
+      const quantityDiff = body.quantity - currentSale.quantity;
+
+      if (quantityDiff > 0) {
+        // Need more inventory - check availability
+        const inventoryItem = await InventoryModel.findOne({
+          userId: user.userId,
+          productName: currentSale.item,
+        });
+
+        if (!inventoryItem || inventoryItem.stock < quantityDiff) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: {
+                code: "INSUFFICIENT_INVENTORY",
+                message: `Insufficient inventory for additional quantity. Available: ${
+                  inventoryItem?.stock || 0
+                }, Additional needed: ${quantityDiff}`,
+                details: {
+                  available: inventoryItem?.stock || 0,
+                  additionalNeeded: quantityDiff,
+                  item: currentSale.item,
+                },
+              },
+            },
+            { status: 400 }
+          );
+        }
+      }
+
+      // Update inventory (negative quantityDiff means returning to inventory)
+      await InventoryModel.findOneAndUpdate(
+        { userId: user.userId, productName: currentSale.item },
+        { $inc: { stock: -quantityDiff } }
+      );
+    }
+
+    const updatedSale = await SaleModel.findOneAndUpdate(
+      { _id: id, userId: user.userId },
+      updateData,
+      {
+        new: true, // Return the updated document
+        runValidators: true, // Run schema validators
+      }
+    );
 
     if (!updatedSale) {
       return NextResponse.json(
@@ -198,12 +264,28 @@ export async function PUT(
       );
     }
 
+    const saleData = updatedSale.toObject() as Sale;
+
     return NextResponse.json({
       success: true,
-      data: updatedSale as unknown as Sale,
+      data: saleData,
+      message: "Sale updated successfully and inventory adjusted",
     });
   } catch (error) {
     console.error("Error updating sale:", error);
+
+    if (error instanceof Error && error.message === "Authentication required") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: "AUTHENTICATION_REQUIRED",
+            message: "Please login to update sales",
+          },
+        },
+        { status: 401 }
+      );
+    }
 
     // Handle Mongoose validation errors
     if (error instanceof Error && error.name === "ValidationError") {
@@ -245,7 +327,7 @@ export async function DELETE(
 
     await connectToDatabase();
 
-    const { id } = params;
+    const { id } = await params;
 
     // Validate ObjectId format
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -262,12 +344,12 @@ export async function DELETE(
       );
     }
 
-    const deletedSale = await SaleModel.findOneAndDelete({
+    const saleToDelete = await SaleModel.findOne({
       _id: id,
       userId: user.userId,
     });
 
-    if (!deletedSale) {
+    if (!saleToDelete) {
       return NextResponse.json(
         {
           success: false,
@@ -281,9 +363,22 @@ export async function DELETE(
       );
     }
 
+    // Delete the sale
+    await SaleModel.findOneAndDelete({
+      _id: id,
+      userId: user.userId,
+    });
+
+    // Restore inventory stock
+    await InventoryModel.findOneAndUpdate(
+      { userId: user.userId, productName: saleToDelete.item },
+      { $inc: { stock: saleToDelete.quantity } }
+    );
+
     return NextResponse.json({
       success: true,
       data: { id },
+      message: "Sale deleted successfully and inventory restored",
     });
   } catch (error) {
     console.error("Error deleting sale:", error);

@@ -1,21 +1,7 @@
 /** @format */
 
-import mongoose, { Schema, Model } from "mongoose";
+import mongoose, { Schema } from "mongoose";
 import { Expense } from "./types";
-
-// Define valid expense categories
-const EXPENSE_CATEGORIES = [
-  "Office Supplies",
-  "Marketing",
-  "Travel",
-  "Utilities",
-  "Software",
-  "Equipment",
-  "Professional Services",
-  "Rent",
-  "Insurance",
-  "Other",
-];
 
 // Define the Expense schema
 const ExpenseSchema = new Schema(
@@ -28,11 +14,8 @@ const ExpenseSchema = new Schema(
     category: {
       type: String,
       required: [true, "Category is required"],
-      enum: {
-        values: EXPENSE_CATEGORIES,
-        message: "Category must be one of: {VALUE}",
-      },
       trim: true,
+      maxlength: [50, "Category cannot exceed 50 characters"],
     },
     description: {
       type: String,
@@ -80,7 +63,11 @@ ExpenseSchema.index({ userId: 1, category: 1 }); // Compound index for user-spec
 ExpenseSchema.index({ userId: 1, createdAt: -1 }); // Compound index for user-specific recent expenses
 
 // Create and export the model
-const ExpenseModel =
-  mongoose.models.Expense || mongoose.model<Expense>("Expense", ExpenseSchema);
+// Clear any existing model to ensure schema changes are applied
+if (mongoose.models.Expense) {
+  delete mongoose.models.Expense;
+}
+
+const ExpenseModel = mongoose.model<Expense>("Expense", ExpenseSchema);
 
 export default ExpenseModel;

@@ -132,27 +132,34 @@ export async function PUT(
 
     // Validate category if provided
     if (body.category !== undefined) {
-      const validCategories = [
-        "Office Supplies",
-        "Marketing",
-        "Travel",
-        "Utilities",
-        "Software",
-        "Equipment",
-        "Professional Services",
-        "Rent",
-        "Insurance",
-        "Other",
-      ];
-
-      if (!validCategories.includes(body.category)) {
+      if (
+        typeof body.category !== "string" ||
+        body.category.trim().length === 0
+      ) {
         return NextResponse.json(
           {
             success: false,
             error: {
               code: "VALIDATION_ERROR",
-              message: `Category must be one of: ${validCategories.join(", ")}`,
-              details: { category: body.category, validCategories },
+              message: "Category must be a non-empty string",
+              details: { category: body.category },
+            },
+          },
+          { status: 400 }
+        );
+      }
+
+      if (body.category.trim().length > 50) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Category cannot exceed 50 characters",
+              details: {
+                category: body.category,
+                length: body.category.length,
+              },
             },
           },
           { status: 400 }

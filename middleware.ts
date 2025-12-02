@@ -2,6 +2,9 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+// Public routes that don't need authentication
+const publicRoutes = ["/", "/login", "/register"];
+
 // Protected routes that need authentication
 const protectedRoutes = [
   "/dashboard",
@@ -15,7 +18,6 @@ const protectedRoutes = [
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const token = request.cookies.get("auth-token")?.value;
 
   // --- Allow API and static resources ---
   if (
@@ -26,39 +28,21 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // --- Validate JWT token format ---
-  const hasValidToken =
-    !!token &&
-    token !== "undefined" &&
-    token !== "null" &&
-    token.length > 20 &&
-    token.includes(".") &&
-    token.split(".").length === 3;
+  // --- Allow public routes ---
+  if (publicRoutes.includes(pathname)) {
+    return NextResponse.next();
+  }
 
+  // --- For protected routes, let the client-side handle authentication ---
+  // Since we're using localStorage for tokens, we can't check auth in middleware
+  // The useRequireAuth hook will handle redirects on the client side
   const isProtected = protectedRoutes.some((route) =>
     pathname.startsWith(route)
   );
 
-  // --- Case 1: Unauthenticated user accessing protected route ---
-  if (isProtected && !hasValidToken) {
-    const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("redirect", pathname); // optional redirect after login
-    return NextResponse.redirect(loginUrl);
-  }
-
-  // --- Case 2: Authenticated user tries to access login/register ---
-  if (hasValidToken && (pathname === "/login" || pathname === "/register")) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
-  }
-
-  // --- Case 3: User logs out (auth-token deleted) -> go to landing page ---
-  if (!hasValidToken && pathname === "/logout") {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-
-  // --- Case 4: Root route ("/") handling ---
-  if (pathname === "/") {
-    return NextResponse.next(); // public landing page
+  if (isProtected) {
+    // Just allow the request through - client-side auth will handle it
+    return NextResponse.next();
   }
 
   // --- Default: allow navigation ---

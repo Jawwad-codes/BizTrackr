@@ -14,6 +14,7 @@ import {
   LoadingButton,
 } from "@/components/loading-states";
 import { useLoading, useMultipleLoading } from "@/hooks/use-loading";
+import { useRequireAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 
 const EXPENSE_CATEGORIES = [
@@ -31,6 +32,19 @@ const EXPENSE_CATEGORIES = [
   "Maintenance & Repairs",
   "Shipping & Delivery",
   "Taxes & Licenses",
+  "Banking & Finance",
+  "Legal & Compliance",
+  "Training & Education",
+  "Telecommunications",
+  "Fuel & Transportation",
+  "Raw Materials",
+  "Inventory",
+  "Cleaning & Janitorial",
+  "Security",
+  "Consulting",
+  "Advertising",
+  "Website & Domain",
+  "Accounting",
   "Other",
 ];
 
@@ -44,7 +58,10 @@ export default function ExpensesPage() {
     amount: "",
     date: "",
   });
+  const [showCustomCategory, setShowCustomCategory] = useState(false);
+  const [customCategory, setCustomCategory] = useState("");
 
+  const { user, loading: authLoading } = useRequireAuth();
   const { loading, error, withLoading, clearError } = useLoading({
     initialLoading: true,
   });
@@ -57,7 +74,15 @@ export default function ExpensesPage() {
 
   const fetchExpenses = async () => {
     const result = await withLoading(async () => {
-      const response = await fetch("/api/expenses");
+      // Get user token from localStorage
+      const userData = localStorage.getItem("user");
+      const token = userData ? JSON.parse(userData).token : null;
+
+      const response = await fetch("/api/expenses", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
       const result: APIResponse<Expense[]> = await response.json();
 
       if (result.success) {
@@ -85,10 +110,15 @@ export default function ExpensesPage() {
     }
 
     const result = await withMultipleLoading("add", async () => {
+      // Get user token from localStorage
+      const userData = localStorage.getItem("user");
+      const token = userData ? JSON.parse(userData).token : null;
+
       const response = await fetch("/api/expenses", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           category: formData.category,
@@ -103,6 +133,8 @@ export default function ExpensesPage() {
       if (result.success) {
         setExpenses([result.data, ...expenses]);
         setFormData({ category: "", description: "", amount: "", date: "" });
+        setShowCustomCategory(false);
+        setCustomCategory("");
         setShowForm(false);
         return result.data;
       } else {
@@ -119,6 +151,18 @@ export default function ExpensesPage() {
 
   const handleEdit = (expense: Expense) => {
     setEditingId(expense._id as string);
+
+    // Check if the category is in our predefined list
+    const isCustomCategory = !EXPENSE_CATEGORIES.includes(expense.category);
+
+    if (isCustomCategory) {
+      setShowCustomCategory(true);
+      setCustomCategory(expense.category);
+    } else {
+      setShowCustomCategory(false);
+      setCustomCategory("");
+    }
+
     setFormData({
       category: expense.category,
       description: expense.description,
@@ -141,10 +185,15 @@ export default function ExpensesPage() {
     }
 
     const result = await withMultipleLoading("update", async () => {
+      // Get user token from localStorage
+      const userData = localStorage.getItem("user");
+      const token = userData ? JSON.parse(userData).token : null;
+
       const response = await fetch(`/api/expenses/${editingId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           category: formData.category,
@@ -161,6 +210,8 @@ export default function ExpensesPage() {
           expenses.map((e) => (e._id === editingId ? result.data : e))
         );
         setFormData({ category: "", description: "", amount: "", date: "" });
+        setShowCustomCategory(false);
+        setCustomCategory("");
         setShowForm(false);
         setEditingId(null);
         return result.data;
@@ -179,13 +230,22 @@ export default function ExpensesPage() {
   const handleCancelEdit = () => {
     setEditingId(null);
     setFormData({ category: "", description: "", amount: "", date: "" });
+    setShowCustomCategory(false);
+    setCustomCategory("");
     setShowForm(false);
   };
 
   const handleDelete = async (id: string, description: string) => {
     const result = await withMultipleLoading(`delete-${id}`, async () => {
+      // Get user token from localStorage
+      const userData = localStorage.getItem("user");
+      const token = userData ? JSON.parse(userData).token : null;
+
       const response = await fetch(`/api/expenses/${id}`, {
         method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       const result: APIResponse<Expense> = await response.json();
@@ -204,6 +264,20 @@ export default function ExpensesPage() {
   };
 
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+  // Don't render anything while checking authentication
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <LoadingSpinner message="Authenticating..." size="lg" />
+      </div>
+    );
+  }
+
+  // If not loading and no user, the useRequireAuth hook will redirect
+  if (!user) {
+    return null;
+  }
 
   return (
     <div className="flex">
@@ -255,24 +329,62 @@ export default function ExpensesPage() {
           {/* Add Form */}
           {showForm && (
             <div className="p-6 border border-border/40 bg-card/50 backdrop-blur rounded-lg space-y-4 animate-slide-up">
-              <h3 className="font-semibold text-foreground">
-                {editingId ? "Edit Expense" : "Add New Expense"}
-              </h3>
+              <div className="space-y-2">
+                <h3 className="font-semibold text-foreground">
+                  {editingId ? "Edit Expense" : "Add New Expense"}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Choose from common categories or add your own custom category
+                </p>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <select
-                  value={formData.category}
-                  onChange={(e) =>
-                    setFormData({ ...formData, category: e.target.value })
-                  }
-                  className="px-4 py-2 bg-secondary border border-border/40 text-foreground rounded-lg text-sm transition-all duration-300 ease-out"
-                >
-                  <option value="">Select category</option>
-                  {EXPENSE_CATEGORIES.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
+                <div className="space-y-2">
+                  <select
+                    value={showCustomCategory ? "custom" : formData.category}
+                    onChange={(e) => {
+                      if (e.target.value === "custom") {
+                        setShowCustomCategory(true);
+                        setFormData({ ...formData, category: customCategory });
+                      } else {
+                        setShowCustomCategory(false);
+                        setFormData({ ...formData, category: e.target.value });
+                      }
+                    }}
+                    className="w-full px-4 py-2 bg-secondary border border-border/40 text-foreground rounded-lg text-sm transition-all duration-300 ease-out"
+                  >
+                    <option value="">Select category</option>
+                    {EXPENSE_CATEGORIES.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                    <option value="custom">➕ Add Custom Category</option>
+                  </select>
+
+                  {showCustomCategory && (
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Enter custom category name (e.g., Equipment Rental, Consulting)"
+                        value={customCategory}
+                        onChange={(e) => {
+                          setCustomCategory(e.target.value);
+                          setFormData({
+                            ...formData,
+                            category: e.target.value,
+                          });
+                        }}
+                        className="w-full px-4 py-2 bg-accent/10 border border-accent/50 text-foreground rounded-lg text-sm placeholder:text-muted-foreground transition-all duration-300 ease-out focus:border-accent focus:ring-1 focus:ring-accent/20"
+                        autoFocus
+                      />
+                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                        <span className="text-xs text-accent font-medium">
+                          Custom
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <input
                   type="text"
                   placeholder="Description"
@@ -314,6 +426,8 @@ export default function ExpensesPage() {
                       ? handleCancelEdit
                       : () => {
                           setShowForm(false);
+                          setShowCustomCategory(false);
+                          setCustomCategory("");
                           clearError();
                         }
                   }

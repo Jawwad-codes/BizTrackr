@@ -75,7 +75,6 @@ export function AIChatbot() {
         return;
       }
 
-      // Fetch dashboard metrics which includes all business data
       const response = await fetch("/api/dashboard/metrics", {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -117,171 +116,34 @@ export function AIChatbot() {
     }
   };
 
-  const generateAIResponse = (userMessage: string): string => {
-    const lowerMessage = userMessage.toLowerCase();
-
-    if (!businessData) {
-      return "I'm still loading your business data. Please wait a moment and try again.";
-    }
-
-    // Sales queries
-    if (lowerMessage.includes("sales") || lowerMessage.includes("revenue")) {
-      const recentSalesInfo =
-        businessData.recentSales.length > 0
-          ? `Your recent sales include: ${businessData.recentSales
-              .slice(0, 3)
-              .map((sale) => `$${sale.amount.toLocaleString()}`)
-              .join(", ")}.`
-          : "No recent sales data available.";
-
-      return `Your total sales are $${businessData.totalSales.toLocaleString()}. ${recentSalesInfo} ${
-        businessData.netProfit > 0
-          ? "Your sales are generating good profit. Keep up the momentum!"
-          : "Consider strategies to increase sales volume or pricing."
-      }`;
-    }
-
-    // Expense queries
-    if (
-      lowerMessage.includes("expense") ||
-      lowerMessage.includes("spending") ||
-      lowerMessage.includes("cost")
-    ) {
-      return `Your total expenses are $${businessData.totalExpenses.toLocaleString()}. Your top expense category is ${
-        businessData.topExpenseCategory
-      } at $${businessData.topExpenseAmount.toLocaleString()}. ${
-        businessData.totalExpenses > businessData.totalSales
-          ? "⚠️ Your expenses exceed sales - consider cost optimization."
-          : "Your expense management looks healthy."
-      }`;
-    }
-
-    // Profit queries
-    if (lowerMessage.includes("profit") || lowerMessage.includes("margin")) {
-      const profitStatus =
-        businessData.netProfit >= 0 ? "profitable" : "showing losses";
-      const advice =
-        businessData.netProfit >= 0
-          ? "Great job! Consider reinvesting profits for growth."
-          : "Focus on increasing sales or reducing costs to improve profitability.";
-
-      return `Your net profit is $${businessData.netProfit.toLocaleString()} with a ${businessData.profitMargin.toFixed(
-        1
-      )}% profit margin. Your business is currently ${profitStatus}. ${advice}`;
-    }
-
-    // Inventory queries
-    if (
-      lowerMessage.includes("inventory") ||
-      lowerMessage.includes("stock") ||
-      lowerMessage.includes("product")
-    ) {
-      const stockAlert =
-        businessData.lowStockItems > 0
-          ? `⚠️ You have ${businessData.lowStockItems} items running low on stock that need immediate attention.`
-          : "Your inventory levels look healthy.";
-
-      return `You have ${
-        businessData.totalProducts
-      } products in your inventory. ${stockAlert} ${
-        businessData.lowStockItems > 0
-          ? "Consider restocking soon to avoid sales disruptions."
-          : "Keep monitoring stock levels to maintain smooth operations."
-      }`;
-    }
-
-    // Performance queries
-    if (
-      lowerMessage.includes("performance") ||
-      lowerMessage.includes("how am i doing") ||
-      lowerMessage.includes("summary")
-    ) {
-      const performance =
-        businessData.netProfit >= 0 ? "well" : "facing challenges";
-      const trend =
-        businessData.profitMargin > 10
-          ? "strong"
-          : businessData.profitMargin > 0
-          ? "moderate"
-          : "concerning";
-
-      return `Your business is performing ${performance}! Here's a quick summary:
-💰 Sales: $${businessData.totalSales.toLocaleString()}
-💸 Expenses: $${businessData.totalExpenses.toLocaleString()}
-📈 Profit: $${businessData.netProfit.toLocaleString()} (${businessData.profitMargin.toFixed(
-        1
-      )}% margin - ${trend})
-📦 Inventory: ${businessData.totalProducts} products${
-        businessData.lowStockItems > 0
-          ? `, ${businessData.lowStockItems} low stock`
-          : ""
+  const generateAIResponse = async (userMessage: string): Promise<string> => {
+    try {
+      if (!businessData) {
+        return "I'm loading your business data. Please try again in a moment.";
       }
 
-${
-  businessData.netProfit >= 0
-    ? "Keep up the excellent work!"
-    : "Focus on improving profitability."
-}`;
-    }
+      const response = await fetch("/api/chatbot", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: userMessage,
+          businessData: businessData, // VERY IMPORTANT
+        }),
+      });
 
-    // Growth queries
-    if (
-      lowerMessage.includes("growth") ||
-      lowerMessage.includes("expand") ||
-      lowerMessage.includes("improve")
-    ) {
-      const canGrow =
-        businessData.netProfit > 0 && businessData.profitMargin > 5;
+      const result = await response.json();
 
-      return `${
-        canGrow
-          ? `With your ${businessData.profitMargin.toFixed(
-              1
-            )}% profit margin, you're in a good position to expand! Consider investing in marketing or new products.`
-          : "Focus on improving profitability first before expanding. Optimize costs and increase sales."
-      } ${
-        businessData.lowStockItems > 0
-          ? "Also, address your low stock items to prevent lost sales."
-          : ""
-      }`;
-    }
-
-    // Specific advice queries
-    if (
-      lowerMessage.includes("advice") ||
-      lowerMessage.includes("recommend") ||
-      lowerMessage.includes("suggest")
-    ) {
-      const advice = [];
-
-      if (businessData.lowStockItems > 0) {
-        advice.push(
-          `📦 Restock ${businessData.lowStockItems} low inventory items immediately`
-        );
+      if (!result.success) {
+        return "AI couldn't generate a response. Please try again.";
       }
 
-      if (businessData.netProfit < 0) {
-        advice.push("💡 Review and reduce unnecessary expenses");
-        advice.push(
-          "📈 Focus on increasing sales through marketing or pricing optimization"
-        );
-      } else if (businessData.profitMargin < 10) {
-        advice.push("💰 Look for ways to improve profit margins");
-      } else {
-        advice.push("🚀 Consider reinvesting profits for business growth");
-      }
-
-      advice.push("📊 Regular financial reviews to track progress");
-
-      return `Here are my recommendations for your business:\n\n${advice.join(
-        "\n"
-      )}`;
+      return result.response;
+    } catch (error) {
+      console.error("Chat API error:", error);
+      return "Sorry, I couldn't process your request.";
     }
-
-    // Default response with current data
-    return `I can help you with your business data! Currently, you have $${businessData.totalSales.toLocaleString()} in sales, $${businessData.totalExpenses.toLocaleString()} in expenses, and ${
-      businessData.totalProducts
-    } products. Ask me about sales, expenses, profit, inventory, or business advice!`;
   };
 
   const handleSendMessage = async () => {
@@ -296,11 +158,12 @@ ${
     };
 
     setMessages((prev) => [...prev, userMessage]);
+    const userInput = input;
     setInput("");
     setIsLoading(true);
 
-    setTimeout(() => {
-      const aiResponse = generateAIResponse(input);
+    try {
+      const aiResponse = await generateAIResponse(userInput);
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -310,8 +173,18 @@ ${
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error("Error generating response:", error);
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        text: "Sorry, I encountered an error. Please try again.",
+        sender: "assistant",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsLoading(false);
-    }, 800);
+    }
   };
 
   return (
