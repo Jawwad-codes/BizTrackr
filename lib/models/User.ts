@@ -5,17 +5,16 @@ import { User } from "./types";
 import bcrypt from "bcryptjs";
 
 // Define the User schema
-const UserSchema = new Schema(
+const UserSchema = new Schema<User>(
   {
     email: {
       type: String,
       required: [true, "Email is required"],
-      unique: true,
+      unique: true, // Keep this, Mongoose will create the index
       lowercase: true,
       trim: true,
       validate: {
         validator: function (value: string) {
-          // Basic email validation
           const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
           return emailRegex.test(value);
         },
@@ -35,13 +34,11 @@ const UserSchema = new Schema(
     },
     businessName: {
       type: String,
-      required: false,
       trim: true,
       maxlength: [100, "Business name cannot exceed 100 characters"],
     },
     businessType: {
       type: String,
-      required: false,
       enum: [
         "glass-hardware",
         "retail-store",
@@ -57,20 +54,16 @@ const UserSchema = new Schema(
     },
   },
   {
-    timestamps: true, // Automatically add createdAt and updatedAt
+    timestamps: true,
     collection: "users",
   }
 );
 
 // Hash password before saving
 UserSchema.pre("save", async function (next) {
-  // Only hash the password if it has been modified (or is new)
   if (!this.isModified("password")) return next();
-
   try {
-    // Hash password with cost of 12
-    const hashedPassword = await bcrypt.hash(this.password, 12);
-    this.password = hashedPassword;
+    this.password = await bcrypt.hash(this.password, 12);
     next();
   } catch (error) {
     next(error as Error);
@@ -84,12 +77,11 @@ UserSchema.methods.comparePassword = async function (
   return bcrypt.compare(candidatePassword, this.password);
 };
 
-// Add indexes for better query performance
-UserSchema.index({ email: 1 }); // Index for email queries
-UserSchema.index({ createdAt: -1 }); // Index for recent users
+// Keep only additional indexes
+UserSchema.index({ createdAt: -1 }); // For recent users queries
 
 // Create and export the model
-const UserModel =
+const UserModel: Model<User> =
   mongoose.models.User || mongoose.model<User>("User", UserSchema);
 
 export default UserModel;
