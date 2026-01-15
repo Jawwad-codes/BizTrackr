@@ -1,5 +1,6 @@
 # Use a lightweight Node.js image
-FROM node:18-alpine
+FROM node:20-alpine
+
 
 # Install curl for health checks
 RUN apk add --no-cache curl
@@ -11,7 +12,8 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install
+RUN npm install --legacy-peer-deps
+
 
 # Copy the rest of the app
 COPY . .
